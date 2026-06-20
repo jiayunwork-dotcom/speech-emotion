@@ -263,18 +263,20 @@ class StatisticsAnalyzer:
         count1 = len(result1.segments)
         count2 = len(result2.segments)
 
-        score1 = count1 / max(avg_dur1, 1) if avg_dur1 > 0 else 0
-        score2 = count2 / max(avg_dur2, 1) if avg_dur2 > 0 else 0
-
-        pct_diff = abs(count1 - count2) / max(count1, count2) * 100 if max(count1, count2) > 0 else 0
+        count_diff_pct = abs(count1 - count2) / max(count1, count2) * 100 if max(count1, count2) > 0 else 0
         avg_diff_pct = abs(avg_dur1 - avg_dur2) / max(avg_dur1, avg_dur2) * 100 if max(avg_dur1, avg_dur2) > 0 else 0
 
-        if pct_diff <= 5 and avg_diff_pct <= 5:
-            conclusion = ComparisonLabel.TIE
-        elif score1 > score2:
+        count1_more = count1 > count2 and count_diff_pct > 5
+        count2_more = count2 > count1 and count_diff_pct > 5
+        avg1_shorter = avg_dur1 < avg_dur2 and avg_diff_pct > 5
+        avg2_shorter = avg_dur2 < avg_dur1 and avg_diff_pct > 5
+
+        if count1_more and avg1_shorter:
             conclusion = ComparisonLabel.TASK1
-        else:
+        elif count2_more and avg2_shorter:
             conclusion = ComparisonLabel.TASK2
+        else:
+            conclusion = ComparisonLabel.TIE
 
         return ActivityComparison(
             avg_segment_duration_ms_task1=round(avg_dur1, 2),

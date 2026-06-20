@@ -1,10 +1,17 @@
 import json
 from datetime import datetime, timedelta
-from typing import List
+from typing import List, Optional
 from pathlib import Path
 
 from src.core.config import settings
-from src.core.models import AudioAnalysisResult, AudioSegment
+from src.core.models import (
+    AudioAnalysisResult,
+    AudioSegment,
+    QualityAssessment,
+    QualityDimensionScore,
+    QualitySuggestion,
+    QualityGrade
+)
 
 
 class OutputFormatter:
@@ -18,6 +25,38 @@ class OutputFormatter:
         return f"{hours:02d}:{minutes:02d}:{secs:02d},{millis:03d}"
 
     @staticmethod
+    def _quality_to_dict(qa: Optional[QualityAssessment]) -> Optional[dict]:
+        if qa is None:
+            return None
+        return {
+            "task_id": qa.task_id,
+            "snr": qa.snr.model_dump() if qa.snr else None,
+            "clipping": qa.clipping.model_dump() if qa.clipping else None,
+            "speech_ratio": qa.speech_ratio.model_dump() if qa.speech_ratio else None,
+            "sample_rate_fitness": qa.sample_rate_fitness.model_dump() if qa.sample_rate_fitness else None,
+            "overall_score": qa.overall_score,
+            "grade": qa.grade.value if qa.grade else None,
+            "suggestions": [s.model_dump() for s in qa.suggestions] if qa.suggestions else [],
+            "created_at": qa.created_at.isoformat() if qa.created_at else None
+        }
+
+    @staticmethod
+    def _dict_to_quality(data: Optional[dict]) -> Optional[QualityAssessment]:
+        if data is None:
+            return None
+        return QualityAssessment(
+            task_id=data["task_id"],
+            snr=QualityDimensionScore(**data["snr"]) if data.get("snr") else None,
+            clipping=QualityDimensionScore(**data["clipping"]) if data.get("clipping") else None,
+            speech_ratio=QualityDimensionScore(**data["speech_ratio"]) if data.get("speech_ratio") else None,
+            sample_rate_fitness=QualityDimensionScore(**data["sample_rate_fitness"]) if data.get("sample_rate_fitness") else None,
+            overall_score=data["overall_score"],
+            grade=QualityGrade(data["grade"]) if data.get("grade") else None,
+            suggestions=[QualitySuggestion(**s) for s in data.get("suggestions", [])],
+            created_at=datetime.fromisoformat(data["created_at"]) if data.get("created_at") else None
+        )
+
+    @staticmethod
     def to_json(result: AudioAnalysisResult) -> str:
         result_dict = {
             "task_id": result.task_id,
@@ -25,9 +64,10 @@ class OutputFormatter:
             "duration_ms": result.duration_ms,
             "sample_rate": result.sample_rate,
             "created_at": result.created_at.isoformat(),
+            "quality_assessment": OutputFormatter._quality_to_dict(result.quality_assessment),
             "segments": []
         }
-        
+
         for seg in result.segments:
             seg_dict = {
                 "start_ms": seg.start_ms,
@@ -38,7 +78,7 @@ class OutputFormatter:
                 "emotion_probabilities": seg.emotion_probabilities
             }
             result_dict["segments"].append(seg_dict)
-        
+
         return json.dumps(result_dict, ensure_ascii=False, indent=2)
 
     @staticmethod
@@ -83,16 +123,19 @@ class OutputFormatter:
         json_path = settings.PROCESSED_DATA_DIR / f"{task_id}_result.json"
         with open(json_path, 'r', encoding='utf-8') as f:
             data = json.load(f)
-        
+
         segments = []
         for seg_data in data["segments"]:
             segments.append(AudioSegment(**seg_data))
-        
+
+        quality_assessment = OutputFormatter._dict_to_quality(data.get("quality_assessment"))
+
         return AudioAnalysisResult(
             task_id=data["task_id"],
             original_filename=data["original_filename"],
             duration_ms=data["duration_ms"],
             sample_rate=data["sample_rate"],
             created_at=datetime.fromisoformat(data["created_at"]),
-            segments=segments
+            segments=segments,
+            quality_assessment=quality_assessment
         )

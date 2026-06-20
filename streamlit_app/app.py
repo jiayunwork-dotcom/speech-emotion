@@ -63,6 +63,12 @@ def get_audio_data(task_id):
     response = requests.get(f"{API_BASE_URL}/task/{task_id}/audio")
     return response.content
 
+def get_task_quality(task_id):
+    response = requests.get(f"{API_BASE_URL}/task/{task_id}/quality")
+    if response.status_code == 200:
+        return response.json()
+    return None
+
 def list_completed_tasks():
     response = requests.get(f"{API_BASE_URL}/tasks", params={"status": "completed"})
     return response.json()
@@ -354,12 +360,175 @@ with tab1:
                     summary_data = get_task_summary(task_id)
                     audio_bytes = get_audio_data(task_id)
                     y, sr = load_audio_from_bytes(audio_bytes)
+                    quality_data = result_data.get('quality_assessment')
+                    if not quality_data:
+                        quality_data = get_task_quality(task_id)
                 except Exception as e:
                     st.error(f"加载结果失败: {str(e)}")
                     st.stop()
-            
+
             st.markdown("---")
-            
+
+            if quality_data:
+                grade_colors = {
+                    "优秀": {"bg": "#d4edda", "border": "#28a745", "text": "#155724", "badge": "#28a745"},
+                    "良好": {"bg": "#d1ecf1", "border": "#17a2b8", "text": "#0c5460", "badge": "#17a2b8"},
+                    "一般": {"bg": "#fff3cd", "border": "#ffc107", "text": "#856404", "badge": "#fd7e14"},
+                    "较差": {"bg": "#f8d7da", "border": "#dc3545", "text": "#721c24", "badge": "#dc3545"}
+                }
+                grade = quality_data.get('grade', '一般')
+                colors = grade_colors.get(grade, grade_colors["一般"])
+                overall_score = quality_data.get('overall_score', 0)
+
+                with st.container():
+                    st.markdown(
+                        f"""
+                        <div style="
+                            background-color: {colors['bg']};
+                            border: 2px solid {colors['border']};
+                            border-radius: 12px;
+                            padding: 16px 20px;
+                            margin-bottom: 16px;
+                        ">
+                            <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px;">
+                                <div style="display: flex; align-items: center; gap: 16px;">
+                                    <div style="
+                                        font-size: 32px;
+                                        font-weight: bold;
+                                        color: {colors['text']};
+                                        min-width: 120px;
+                                    ">
+                                        {overall_score:.1f} 分
+                                    </div>
+                                    <div>
+                                        <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 4px;">
+                                            <span style="
+                                                background-color: {colors['badge']};
+                                                color: white;
+                                                padding: 4px 14px;
+                                                border-radius: 20px;
+                                                font-weight: bold;
+                                                font-size: 16px;
+                                            ">
+                                                {grade}
+                                            </span>
+                                            <span style="font-size: 18px; font-weight: bold; color: {colors['text']};">
+                                                🎵 音频质量评估
+                                            </span>
+                                        </div>
+                                        <div style="color: {colors['text']}; font-size: 14px; opacity: 0.85;">
+                                            综合评估音频可分析程度，帮助判断分析结果的可靠程度
+                                        </div>
+                                    </div>
+                                </div>
+                                <div style="width: 220px;">
+                                    <div style="height: 12px; background: rgba(255,255,255,0.6); border-radius: 6px; overflow: hidden;">
+                                        <div style="
+                                            height: 100%;
+                                            width: {min(max(overall_score, 0), 100)}%;
+                                            background: linear-gradient(90deg, {colors['border']}, {colors['badge']});
+                                            border-radius: 6px;
+                                            transition: width 0.5s ease;
+                                        "></div>
+                                    </div>
+                                    <div style="display: flex; justify-content: space-between; font-size: 11px; margin-top: 4px; color: {colors['text']}; opacity: 0.7;">
+                                        <span>0</span><span>50</span><span>100</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        """,
+                        unsafe_allow_html=True
+                    )
+
+                    with st.expander("📊 查看各维度详情和改善建议", expanded=False):
+                        dim_order = ['snr', 'clipping', 'speech_ratio', 'sample_rate_fitness']
+                        dim_labels = {
+                            'snr': '信噪比(SNR)',
+                            'clipping': '削波检测',
+                            'speech_ratio': '有效语音占比',
+                            'sample_rate_fitness': '采样率适配度'
+                        }
+                        weights = {
+                            'snr': '40%',
+                            'clipping': '20%',
+                            'speech_ratio': '25%',
+                            'sample_rate_fitness': '15%'
+                        }
+
+                        for dim_key in dim_order:
+                            dim = quality_data.get(dim_key)
+                            if dim:
+                                label = dim_labels.get(dim_key, dim.get('name', dim_key))
+                                score = dim.get('score', 0)
+                                raw_val = dim.get('raw_value')
+                                unit = dim.get('unit', '')
+                                weight = weights.get(dim_key, '')
+
+                                if score >= 90:
+                                    bar_color = "#28a745"
+                                elif score >= 70:
+                                    bar_color = "#17a2b8"
+                                elif score >= 50:
+                                    bar_color = "#fd7e14"
+                                else:
+                                    bar_color = "#dc3545"
+
+                                val_text = ""
+                                if raw_val is not None:
+                                    if unit == 'dB':
+                                        val_text = f" · {raw_val:.1f} {unit}"
+                                    elif unit == '%':
+                                        val_text = f" · {raw_val:.1f} {unit}"
+                                    elif unit == 'Hz':
+                                        val_text = f" · {int(raw_val)} {unit}"
+                                    else:
+                                        val_text = f" · {raw_val} {unit}"
+
+                                st.markdown(
+                                    f"""
+                                    <div style="padding: 10px 4px; border-bottom: 1px solid #eee;">
+                                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+                                            <div style="font-weight: 500; color: #333;">
+                                                {label} <span style="font-size: 12px; color: #888; margin-left: 6px;">(权重 {weight})</span>
+                                            </div>
+                                            <div style="font-weight: bold; color: {bar_color};">
+                                                {score:.0f} 分{val_text}
+                                            </div>
+                                        </div>
+                                        <div style="height: 8px; background: #e9ecef; border-radius: 4px; overflow: hidden;">
+                                            <div style="
+                                                height: 100%;
+                                                width: {score:.0f}%;
+                                                background: {bar_color};
+                                                border-radius: 4px;
+                                                transition: width 0.4s ease;
+                                            "></div>
+                                        </div>
+                                    </div>
+                                    """,
+                                    unsafe_allow_html=True
+                                )
+
+                        suggestions = quality_data.get('suggestions', [])
+                        if suggestions:
+                            st.markdown("---")
+                            st.markdown("#### 💡 改善建议")
+                            for i, s in enumerate(suggestions, 1):
+                                dim_name = s.get('dimension', '')
+                                problem = s.get('problem', '')
+                                suggestion = s.get('suggestion', '')
+                                is_overall = dim_name == '综合评估'
+
+                                if is_overall:
+                                    st.warning(
+                                        f"**⚠️ 警告：{problem}**\n\n👉 {suggestion}"
+                                    )
+                                else:
+                                    st.info(
+                                        f"**【{dim_name}】{problem}**\n\n👉 {suggestion}"
+                                    )
+
             col1, col2, col3 = st.columns(3)
             with col1:
                 st.metric("总时长", f"{result_data['duration_ms']/1000:.1f} 秒")

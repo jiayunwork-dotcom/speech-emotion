@@ -126,3 +126,87 @@ class AudioProcessor:
         start_sample = int(segment.start_ms / 1000 * sr)
         end_sample = int(segment.end_ms / 1000 * sr)
         return y[start_sample:end_sample]
+
+    @staticmethod
+    def get_original_meta_info(y: np.ndarray, sr: int, task_id: str) -> dict:
+        channels = y.shape[0] if y.ndim > 1 else 1
+        duration_ms = AudioProcessor.get_audio_duration(y, sr)
+        return {
+            "original_sample_rate": sr,
+            "original_channels": channels,
+            "original_duration_ms": duration_ms,
+        }
+
+    @staticmethod
+    def vad_split_with_silence(y: np.ndarray, sr: int) -> Tuple[List[AudioSegment], List[AudioSegment]]:
+        energy = librosa.feature.rms(y=y, frame_length=512, hop_length=256)[0]
+        energy_threshold = np.mean(energy) * settings.VAD_SILENCE_THRESHOLD_RATIO
+
+        frame_duration_ms = (256 / sr) * 1000
+        is_speech = energy > energy_threshold
+
+        speech_segments = []
+        silence_segments = []
+        in_speech = False
+        speech_start = 0
+        silence_start = 0
+
+        for i, speech_flag in enumerate(is_speech):
+            current_time_ms = int(i * frame_duration_ms)
+
+            if speech_flag and not in_speech:
+                silence_duration = current_time_ms - silence_start
+                if silence_start > 0 and silence_duration >= 200:
+                    silence_segments.append(AudioSegment(
+                        start_ms=silence_start,
+                        end_ms=current_time_ms
+                    ))
+                in_speech = True
+                speech_start = current_time_ms
+            elif not speech_flag and in_speech:
+                silence_start = current_time_ms
+                in_speech = False
+                if speech_segments:
+                    last_segment = speech_segments[-1]
+                    gap = speech_start - last_segment.end_ms
+                    if gap < settings.VAD_MIN_SPEECH_GAP_MS:
+                        last_segment.end_ms = int(i * frame_duration_ms)
+                        continue
+                speech_segments.append(AudioSegment(
+                    start_ms=speech_start,
+                    end_ms=int(i * frame_duration_ms)
+                ))
+
+        if in_speech:
+            speech_segments.append(AudioSegment(
+                start_ms=speech_start,
+                end_ms=int(len(is_speech) * frame_duration_ms)
+            ))
+        else:
+            total_duration_ms = int(len(is_speech) * frame_duration_ms)
+            silence_duration = total_duration_ms - silence_start
+            if silence_start > 0 and silence_duration >= 200:
+                silence_segments.append(AudioSegment(
+                    start_ms=silence_start,
+                    end_ms=total_duration_ms
+                ))
+
+        merged_speech = []
+        for seg in speech_segments:
+            if merged_speech:
+                last = merged_speech[-1]
+                if seg.start_ms - last.end_ms < settings.VAD_MIN_SPEECH_GAP_MS:
+                    last.end_ms = seg.end_ms
+                    continue
+            merged_speech.append(seg)
+
+        min_segment_duration = 200
+        merged_speech = [s for s in merged_speech if (s.end_ms - s.start_ms) > min_segment_duration]
+
+        return merged_speech, silence_segments
+
+    @staticmethod
+    def get_frame_energy(y: np.ndarray, sr: int) -> Tuple[np.ndarray, np.ndarray]:
+        energy = librosa.feature.rms(y=y, frame_length=512, hop_length=256)[0]
+        frame_times = librosa.frames_to_time(np.arange(len(energy)), sr=sr, hop_length=256)
+        return energy, frame_times

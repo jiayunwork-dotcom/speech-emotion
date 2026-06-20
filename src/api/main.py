@@ -15,11 +15,14 @@ from src.core.models import (
     AudioAnalysisResult,
     StatisticsSummary,
     ComparisonReport,
-    TaskListItem
+    TaskListItem,
+    QualityAssessment
 )
 from src.tasks.manager import task_manager
 from src.stats.analyzer import StatisticsAnalyzer
 from src.output.formatter import OutputFormatter
+from src.quality.assessor import QualityAssessor
+from src.audio.processor import AudioProcessor
 
 app = FastAPI(
     title="Speech Emotion Recognition API",
@@ -280,6 +283,48 @@ async def compare_tasks(task1_id: str, task2_id: str):
 
     report = StatisticsAnalyzer.generate_comparison_report(result1, result2)
     return report
+
+
+@app.get("/task/{task_id}/quality", response_model=QualityAssessment)
+async def get_task_quality(task_id: str):
+    task_info = task_manager.get_task_status(task_id)
+    if not task_info:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    quality = task_manager.get_task_quality_assessment(task_id)
+    if quality:
+        return quality
+
+    if not task_manager.is_task_preprocessed(task_id):
+        if task_info.status not in [TaskStatus.PROCESSING, TaskStatus.COMPLETED]:
+            raise HTTPException(
+                status_code=400,
+                detail="Task preprocessing not yet started. Please wait for processing to begin."
+            )
+        raise HTTPException(
+            status_code=400,
+            detail=f"Task not yet preprocessed. Current status: {task_info.status}"
+        )
+
+    meta_info = task_manager.get_task_meta_info(task_id)
+    if not meta_info:
+        raise HTTPException(status_code=404, detail="Audio meta info not found")
+
+    try:
+        y, sr = AudioProcessor.load_processed_audio(task_id)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to load processed audio: {str(e)}")
+
+    quality = QualityAssessor.assess(
+        task_id=task_id,
+        y=y,
+        sr=sr,
+        original_sample_rate=meta_info.original_sample_rate,
+        total_duration_ms=meta_info.processed_duration_ms
+    )
+
+    QualityAssessor.save_assessment(quality)
+    return quality
 
 
 if __name__ == "__main__":

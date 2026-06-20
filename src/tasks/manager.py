@@ -8,11 +8,12 @@ import threading
 import logging
 
 from src.core.config import settings
-from src.core.models import TaskStatus, AudioAnalysisResult
+from src.core.models import TaskStatus, AudioAnalysisResult, AudioMetaInfo, QualityAssessment
 from src.audio.processor import AudioProcessor
 from src.speaker.separation import SpeakerSeparator
 from src.emotion.recognizer import EmotionRecognizer
 from src.output.formatter import OutputFormatter
+from src.quality.assessor import QualityAssessor
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -28,6 +29,9 @@ class TaskInfo:
         self.error_message: Optional[str] = None
         self.result: Optional[AudioAnalysisResult] = None
         self.batch_id: Optional[str] = None
+        self.meta_info: Optional[AudioMetaInfo] = None
+        self.quality_assessment: Optional[QualityAssessment] = None
+        self.preprocessed: bool = False
 
 
 class BatchInfo:
@@ -106,13 +110,38 @@ class TaskManager:
             task_info.progress = 0.0
             logger.info(f"Starting task {task_id} for file {task_info.filename}")
 
-            y, sr = AudioProcessor.load_audio(task_info.file_path)
+            y_original, sr_original = AudioProcessor.load_audio(task_info.file_path)
+            original_meta = AudioProcessor.get_original_meta_info(y_original, sr_original, task_id)
             task_info.progress = 0.1
 
-            y, sr = AudioProcessor.convert_to_target_format(y, sr)
+            y, sr = AudioProcessor.convert_to_target_format(y_original, sr_original)
             duration_ms = AudioProcessor.get_audio_duration(y, sr)
             AudioProcessor.save_processed_audio(y, sr, task_id)
-            task_info.progress = 0.25
+
+            meta_info = AudioMetaInfo(
+                task_id=task_id,
+                original_sample_rate=original_meta["original_sample_rate"],
+                original_channels=original_meta["original_channels"],
+                original_duration_ms=original_meta["original_duration_ms"],
+                processed_sample_rate=sr,
+                processed_channels=1,
+                processed_duration_ms=duration_ms
+            )
+            task_info.meta_info = meta_info
+            QualityAssessor.save_meta_info(meta_info)
+            task_info.preprocessed = True
+            task_info.progress = 0.20
+
+            quality_assessment = QualityAssessor.assess(
+                task_id=task_id,
+                y=y,
+                sr=sr,
+                original_sample_rate=original_meta["original_sample_rate"],
+                total_duration_ms=duration_ms
+            )
+            task_info.quality_assessment = quality_assessment
+            QualityAssessor.save_assessment(quality_assessment)
+            task_info.progress = 0.28
 
             segments = AudioProcessor.vad_split(y, sr)
             task_info.progress = 0.4
@@ -131,7 +160,8 @@ class TaskManager:
                 original_filename=task_info.filename,
                 duration_ms=duration_ms,
                 sample_rate=sr,
-                segments=segments
+                segments=segments,
+                quality_assessment=quality_assessment
             )
             task_info.result = result
 
@@ -178,6 +208,38 @@ class TaskManager:
         if task_info and task_info.status == TaskStatus.COMPLETED:
             return task_info.result
         return None
+
+    def get_task_quality_assessment(self, task_id: str) -> Optional[QualityAssessment]:
+        task_info = self._tasks.get(task_id)
+        if task_info and task_info.quality_assessment:
+            return task_info.quality_assessment
+        cached = QualityAssessor.load_assessment(task_id)
+        if cached:
+            if task_info:
+                task_info.quality_assessment = cached
+            return cached
+        return None
+
+    def get_task_meta_info(self, task_id: str) -> Optional[AudioMetaInfo]:
+        task_info = self._tasks.get(task_id)
+        if task_info and task_info.meta_info:
+            return task_info.meta_info
+        cached = QualityAssessor.load_meta_info(task_id)
+        if cached:
+            if task_info:
+                task_info.meta_info = cached
+            return cached
+        return None
+
+    def is_task_preprocessed(self, task_id: str) -> bool:
+        task_info = self._tasks.get(task_id)
+        if task_info and task_info.preprocessed:
+            return True
+        cached_meta = QualityAssessor.load_meta_info(task_id)
+        if cached_meta and task_info:
+            task_info.preprocessed = True
+            return True
+        return cached_meta is not None
 
     def create_batch(self, files: List[Tuple[str, bytes]]) -> Tuple[str, List[Tuple[str, TaskStatus]]]:
         if len(files) > settings.BATCH_MAX_FILES:

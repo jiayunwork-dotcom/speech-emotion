@@ -31,12 +31,56 @@ class AudioSegment(BaseModel):
     speaker_embedding: Optional[List[float]] = None
 
 
+class QualityGrade(str, Enum):
+    EXCELLENT = "优秀"
+    GOOD = "良好"
+    FAIR = "一般"
+    POOR = "较差"
+
+
+class QualityDimensionScore(BaseModel):
+    name: str
+    score: float
+    raw_value: Optional[float] = None
+    unit: Optional[str] = None
+
+
+class QualitySuggestion(BaseModel):
+    dimension: str
+    problem: str
+    suggestion: str
+
+
+class QualityAssessment(BaseModel):
+    task_id: str
+    snr: QualityDimensionScore
+    clipping: QualityDimensionScore
+    speech_ratio: QualityDimensionScore
+    sample_rate_fitness: QualityDimensionScore
+    overall_score: float
+    grade: QualityGrade
+    suggestions: List[QualitySuggestion] = []
+    created_at: datetime = Field(default_factory=datetime.now)
+
+
+class AudioMetaInfo(BaseModel):
+    task_id: str
+    original_sample_rate: int
+    original_channels: int
+    original_duration_ms: int
+    processed_sample_rate: int
+    processed_channels: int
+    processed_duration_ms: int
+    created_at: datetime = Field(default_factory=datetime.now)
+
+
 class AudioAnalysisResult(BaseModel):
     task_id: str
     original_filename: str
     duration_ms: int
     sample_rate: int
     segments: List[AudioSegment]
+    quality_assessment: Optional[QualityAssessment] = None
     created_at: datetime = Field(default_factory=datetime.now)
 
 
@@ -170,3 +214,4 @@ class TaskListItem(BaseModel):
     filename: str
     status: TaskStatus
     created_at: Optional[datetime] = None
+

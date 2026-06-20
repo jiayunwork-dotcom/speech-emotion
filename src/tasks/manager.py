@@ -139,6 +139,8 @@ class TaskManager:
                 original_sample_rate=original_meta["original_sample_rate"],
                 total_duration_ms=duration_ms
             )
+            QualityAssessor.append_history_record(quality_assessment, task_info.filename)
+            quality_assessment = QualityAssessor.apply_trend_suggestions(quality_assessment)
             task_info.quality_assessment = quality_assessment
             QualityAssessor.save_assessment(quality_assessment)
             task_info.progress = 0.28
@@ -272,6 +274,12 @@ class TaskManager:
 
     def get_all_tasks(self) -> List[TaskInfo]:
         return list(self._tasks.values())
+
+    def get_task_filename(self, task_id: str) -> Optional[str]:
+        task_info = self._tasks.get(task_id)
+        if task_info:
+            return task_info.filename
+        return None
 
 
 task_manager = TaskManager()

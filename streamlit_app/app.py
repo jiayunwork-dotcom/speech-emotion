@@ -69,6 +69,12 @@ def get_task_quality(task_id):
         return response.json()
     return None
 
+def get_quality_trend():
+    response = requests.get(f"{API_BASE_URL}/quality/trend")
+    if response.status_code == 200:
+        return response.json()
+    return None
+
 def list_completed_tasks():
     response = requests.get(f"{API_BASE_URL}/tasks", params={"status": "completed"})
     return response.json()
@@ -528,6 +534,104 @@ with tab1:
                                     st.info(
                                         f"**【{dim_name}】{problem}**\n\n👉 {suggestion}"
                                     )
+
+                    with st.expander("📈 质量趋势", expanded=False):
+                        try:
+                            trend_data = get_quality_trend()
+                        except Exception:
+                            trend_data = None
+
+                        if not trend_data:
+                            st.info("暂无趋势数据")
+                        else:
+                            history = trend_data.get('history', [])
+                            if len(history) == 0:
+                                st.info("暂无历史评估记录")
+                            else:
+                                overall_trend = trend_data.get('overall_trend', '数据不足')
+                                has_decline = trend_data.get('has_decline', False)
+                                trend_colors = {
+                                    "上升": "#28a745",
+                                    "稳定": "#17a2b8",
+                                    "下降": "#dc3545",
+                                    "数据不足": "#6c757d"
+                                }
+                                trend_color = trend_colors.get(overall_trend, "#6c757d")
+
+                                st.markdown(
+                                    f"""
+                                    <div style="margin-bottom: 12px;">
+                                        <span style="font-size: 14px; color: #555;">总体趋势: </span>
+                                        <span style="font-weight: bold; color: {trend_color}; font-size: 16px;">{overall_trend}</span>
+                                    </div>
+                                    """,
+                                    unsafe_allow_html=True
+                                )
+
+                                x_indices = list(range(1, len(history) + 1))
+                                y_scores = [h.get('overall_score', 0) for h in history]
+
+                                fig = go.Figure()
+                                fig.add_trace(go.Scatter(
+                                    x=x_indices,
+                                    y=y_scores,
+                                    mode='lines+markers',
+                                    name='综合评分',
+                                    line=dict(color='#17a2b8', width=2),
+                                    marker=dict(size=8, color='#17a2b8'),
+                                    hovertemplate='第%{x}次评估<br>评分: %{y:.1f}<extra></extra>'
+                                ))
+
+                                if len(history) >= 3:
+                                    ma_values = []
+                                    ma_x = []
+                                    for i in range(2, len(history)):
+                                        ma = (y_scores[i] + y_scores[i-1] + y_scores[i-2]) / 3
+                                        ma_values.append(ma)
+                                        ma_x.append(i + 1)
+                                    fig.add_trace(go.Scatter(
+                                        x=ma_x,
+                                        y=ma_values,
+                                        mode='lines',
+                                        name='近3次移动平均',
+                                        line=dict(color='#dc3545', width=2, dash='dash'),
+                                        hovertemplate='第%{x}次<br>移动平均: %{y:.1f}<extra></extra>'
+                                    ))
+
+                                fig.update_layout(
+                                    title="历史综合评分趋势",
+                                    xaxis_title="评估次数",
+                                    yaxis_title="综合评分",
+                                    yaxis=dict(range=[0, 100]),
+                                    height=350,
+                                    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+                                    hovermode="x unified"
+                                )
+                                st.plotly_chart(fig, use_container_width=True)
+
+                                dim_trends = trend_data.get('dimension_trends', [])
+                                if dim_trends and len(dim_trends) > 0:
+                                    st.markdown("#### 各维度变化方向")
+                                    dim_trend_df = pd.DataFrame([
+                                        {
+                                            "维度": dt.get('dimension', ''),
+                                            "趋势": dt.get('trend', '稳定'),
+                                            "最新评分": f"{dt.get('latest_score', 0):.1f}",
+                                            "前两次均值": f"{dt.get('previous_avg', 0):.1f}",
+                                            "差值": f"{dt.get('diff', 0):+.1f}"
+                                        }
+                                        for dt in dim_trends
+                                    ])
+                                    st.dataframe(dim_trend_df, use_container_width=True, hide_index=True)
+
+                                warnings = trend_data.get('warnings', [])
+                                if warnings:
+                                    st.markdown("---")
+                                    for w in warnings:
+                                        st.markdown(
+                                            f'<p style="color: #fd7e14; font-weight: bold; margin: 8px 0;">⚠️ {w}</p>',
+                                            unsafe_allow_html=True
+                                        )
 
             col1, col2, col3 = st.columns(3)
             with col1:

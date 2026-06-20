@@ -9,7 +9,12 @@ from src.core.models import (
     QualityDimensionScore,
     QualitySuggestion,
     QualityGrade,
-    AudioMetaInfo
+    AudioMetaInfo,
+    QualityHistoryRecord,
+    QualityTrend,
+    OverallTrend,
+    DimensionTrend,
+    DimensionTrendDetail
 )
 from src.audio.processor import AudioProcessor
 
@@ -316,3 +321,168 @@ class QualityAssessor:
         with open(path, 'r', encoding='utf-8') as f:
             data = json.load(f)
         return QualityAssessment(**data)
+
+    @staticmethod
+    def _get_history_path() -> Path:
+        settings.PROCESSED_DATA_DIR.mkdir(parents=True, exist_ok=True)
+        return settings.PROCESSED_DATA_DIR / "quality_history.json"
+
+    @staticmethod
+    def load_history() -> list:
+        path = QualityAssessor._get_history_path()
+        if not path.exists():
+            return []
+        with open(path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        records = []
+        for item in data:
+            try:
+                records.append(QualityHistoryRecord(**item))
+            except Exception:
+                continue
+        return records
+
+    @staticmethod
+    def save_history(records: list) -> None:
+        path = QualityAssessor._get_history_path()
+        records_data = [r.model_dump(mode='json') for r in records]
+        with open(path, 'w', encoding='utf-8') as f:
+            json.dump(records_data, f, ensure_ascii=False, indent=2, default=str)
+
+    @staticmethod
+    def append_history_record(assessment: QualityAssessment, filename: str) -> QualityHistoryRecord:
+        history = QualityAssessor.load_history()
+        record = QualityHistoryRecord(
+            task_id=assessment.task_id,
+            filename=filename,
+            assessed_at=assessment.created_at,
+            overall_score=assessment.overall_score,
+            snr_score=assessment.snr.score,
+            clipping_score=assessment.clipping.score,
+            speech_ratio_score=assessment.speech_ratio.score,
+            sample_rate_fitness_score=assessment.sample_rate_fitness.score
+        )
+        history.append(record)
+        QualityAssessor.save_history(history)
+        return record
+
+    @staticmethod
+    def _compute_dimension_trend(
+        dimension_name: str,
+        scores: list
+    ) -> DimensionTrendDetail:
+        if len(scores) < 3:
+            return DimensionTrendDetail(
+                dimension=dimension_name,
+                trend=DimensionTrend.STABLE,
+                latest_score=scores[-1] if scores else 0.0,
+                previous_avg=0.0,
+                diff=0.0
+            )
+        latest = scores[-1]
+        previous_avg = (scores[-2] + scores[-3]) / 2
+        diff = latest - previous_avg
+        if diff > 15:
+            trend = DimensionTrend.RISING
+        elif diff < -15:
+            trend = DimensionTrend.DECLINING
+        else:
+            trend = DimensionTrend.STABLE
+        return DimensionTrendDetail(
+            dimension=dimension_name,
+            trend=trend,
+            latest_score=latest,
+            previous_avg=previous_avg,
+            diff=diff
+        )
+
+    @staticmethod
+    def compute_trend() -> QualityTrend:
+        history = QualityAssessor.load_history()
+        if len(history) < 3:
+            return QualityTrend(
+                overall_trend=OverallTrend.INSUFFICIENT,
+                has_decline=False,
+                history=history,
+                warnings=[]
+            )
+
+        overall_scores = [r.overall_score for r in history]
+        latest = overall_scores[-1]
+        ma3 = (overall_scores[-1] + overall_scores[-2] + overall_scores[-3]) / 3
+        diff = latest - ma3
+        has_decline = diff < -10
+
+        if diff > 10:
+            overall_trend = OverallTrend.RISING
+        elif diff < -10:
+            overall_trend = OverallTrend.DECLINING
+        else:
+            overall_trend = OverallTrend.STABLE
+
+        snr_scores = [r.snr_score for r in history]
+        clipping_scores = [r.clipping_score for r in history]
+        speech_ratio_scores = [r.speech_ratio_score for r in history]
+        sample_rate_scores = [r.sample_rate_fitness_score for r in history]
+
+        dimension_trends = [
+            QualityAssessor._compute_dimension_trend("信噪比(SNR)", snr_scores),
+            QualityAssessor._compute_dimension_trend("削波检测", clipping_scores),
+            QualityAssessor._compute_dimension_trend("有效语音占比", speech_ratio_scores),
+            QualityAssessor._compute_dimension_trend("采样率适配度", sample_rate_scores),
+        ]
+
+        warnings = []
+        if has_decline:
+            warnings.append(
+                f"近期上传音频质量呈下降趋势(当前评分{latest:.1f}分,近3次平均{ma3:.1f}分),建议检查录音设备或环境是否发生变化"
+            )
+
+        dim_map = {
+            "信噪比(SNR)": snr_scores,
+            "削波检测": clipping_scores,
+            "有效语音占比": speech_ratio_scores,
+            "采样率适配度": sample_rate_scores,
+        }
+        for dim_name, scores in dim_map.items():
+            if len(scores) >= 2 and scores[-1] < 50 and scores[-2] < 50:
+                warnings.append(f"{dim_name}连续处于低分状态,建议重点关注")
+
+        return QualityTrend(
+            overall_trend=overall_trend,
+            has_decline=has_decline,
+            moving_average=ma3,
+            latest_score=latest,
+            diff_from_avg=diff,
+            dimension_trends=dimension_trends,
+            history=history,
+            warnings=warnings
+        )
+
+    @staticmethod
+    def apply_trend_suggestions(assessment: QualityAssessment) -> QualityAssessment:
+        trend = QualityAssessor.compute_trend()
+        for warning in trend.warnings:
+            is_overall = "下降趋势" in warning
+            assessment.suggestions.append(QualitySuggestion(
+                dimension="综合评估" if is_overall else "维度监测",
+                problem=warning,
+                suggestion="请持续关注音频质量变化，如问题持续建议排查录音设备、环境噪声或录制方式"
+            ))
+        return assessment
+
+    @staticmethod
+    def assess_with_trend(
+        task_id: str,
+        y: np.ndarray, sr: int,
+        original_sample_rate: int,
+        total_duration_ms: int,
+        filename: str
+    ) -> Tuple[QualityAssessment, QualityTrend]:
+        assessment = QualityAssessor.assess(
+            task_id, y, sr, original_sample_rate, total_duration_ms
+        )
+        QualityAssessor.append_history_record(assessment, filename)
+        trend = QualityAssessor.compute_trend()
+        assessment = QualityAssessor.apply_trend_suggestions(assessment)
+        return assessment, trend

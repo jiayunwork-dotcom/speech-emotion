@@ -215,3 +215,50 @@ class TaskListItem(BaseModel):
     status: TaskStatus
     created_at: Optional[datetime] = None
 
+
+class DimensionTrend(str, Enum):
+    RISING = "上升"
+    STABLE = "稳定"
+    DECLINING = "下降"
+
+
+class OverallTrend(str, Enum):
+    RISING = "上升"
+    STABLE = "稳定"
+    DECLINING = "下降"
+    INSUFFICIENT = "数据不足"
+
+
+class QualityHistoryRecord(BaseModel):
+    task_id: str
+    filename: str
+    assessed_at: datetime
+    overall_score: float
+    snr_score: float
+    clipping_score: float
+    speech_ratio_score: float
+    sample_rate_fitness_score: float
+
+
+class DimensionTrendDetail(BaseModel):
+    dimension: str
+    trend: DimensionTrend
+    latest_score: float
+    previous_avg: float
+    diff: float
+
+
+class QualityTrend(BaseModel):
+    overall_trend: OverallTrend
+    has_decline: bool
+    moving_average: Optional[float] = None
+    latest_score: Optional[float] = None
+    diff_from_avg: Optional[float] = None
+    dimension_trends: List[DimensionTrendDetail] = []
+    history: List[QualityHistoryRecord] = []
+    warnings: List[str] = []
+
+
+class QualityAssessmentWithTrend(QualityAssessment):
+    trend: Optional[QualityTrend] = None
+

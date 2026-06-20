@@ -16,7 +16,8 @@ from src.core.models import (
     StatisticsSummary,
     ComparisonReport,
     TaskListItem,
-    QualityAssessment
+    QualityAssessment,
+    QualityTrend
 )
 from src.tasks.manager import task_manager
 from src.stats.analyzer import StatisticsAnalyzer
@@ -285,15 +286,19 @@ async def compare_tasks(task1_id: str, task2_id: str):
     return report
 
 
-@app.get("/task/{task_id}/quality", response_model=QualityAssessment)
+@app.get("/task/{task_id}/quality")
 async def get_task_quality(task_id: str):
     task_info = task_manager.get_task_status(task_id)
     if not task_info:
         raise HTTPException(status_code=404, detail="Task not found")
 
     quality = task_manager.get_task_quality_assessment(task_id)
+    trend = QualityAssessor.compute_trend()
+
     if quality:
-        return quality
+        result = quality.model_dump()
+        result["trend"] = trend.model_dump()
+        return result
 
     if not task_manager.is_task_preprocessed(task_id):
         if task_info.status not in [TaskStatus.PROCESSING, TaskStatus.COMPLETED]:
@@ -315,16 +320,27 @@ async def get_task_quality(task_id: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to load processed audio: {str(e)}")
 
-    quality = QualityAssessor.assess(
+    filename = task_manager.get_task_filename(task_id) or "unknown"
+
+    quality, trend = QualityAssessor.assess_with_trend(
         task_id=task_id,
         y=y,
         sr=sr,
         original_sample_rate=meta_info.original_sample_rate,
-        total_duration_ms=meta_info.processed_duration_ms
+        total_duration_ms=meta_info.processed_duration_ms,
+        filename=filename
     )
 
     QualityAssessor.save_assessment(quality)
-    return quality
+
+    result = quality.model_dump()
+    result["trend"] = trend.model_dump()
+    return result
+
+
+@app.get("/quality/trend", response_model=QualityTrend)
+async def get_quality_trend():
+    return QualityAssessor.compute_trend()
 
 
 if __name__ == "__main__":

@@ -63,6 +63,22 @@ def get_audio_data(task_id):
     response = requests.get(f"{API_BASE_URL}/task/{task_id}/audio")
     return response.content
 
+def list_completed_tasks():
+    response = requests.get(f"{API_BASE_URL}/tasks", params={"status": "completed"})
+    return response.json()
+
+def compare_tasks(task1_id, task2_id):
+    response = requests.get(f"{API_BASE_URL}/compare", params={"task1_id": task1_id, "task2_id": task2_id})
+    return response.json()
+
+def get_conclusion_color(conclusion):
+    if conclusion == "task1占优":
+        return "color: #28a745; font-weight: bold;"
+    elif conclusion == "task2占优":
+        return "color: #dc3545; font-weight: bold;"
+    else:
+        return "color: #6c757d; font-weight: bold;"
+
 def load_audio_from_bytes(audio_bytes):
     audio_file = io.BytesIO(audio_bytes)
     y, sr = librosa.load(audio_file, sr=None, mono=True)
@@ -277,7 +293,7 @@ def create_segments_table(segments):
         })
     return pd.DataFrame(data)
 
-tab1, tab2 = st.tabs(["📊 单文件分析", "📦 批量处理"])
+tab1, tab2, tab3 = st.tabs(["📊 单文件分析", "📦 批量处理", "🔍 对比分析"])
 
 with tab1:
     st.header("上传音频文件")
@@ -508,6 +524,135 @@ with tab2:
             except Exception as e:
                 st.error(f"获取批次状态失败: {str(e)}")
                 break
+
+with tab3:
+    st.header("对话对比分析")
+    st.markdown("选择两个已完成的分析任务进行横向对比，生成结构化对比报告。")
+    
+    try:
+        completed_tasks = list_completed_tasks()
+    except Exception as e:
+        st.error(f"获取任务列表失败: {str(e)}")
+        completed_tasks = []
+
+    if not completed_tasks:
+        st.info("暂无已完成的任务，请先在「单文件分析」或「批量处理」中完成至少两个任务。")
+    else:
+        task_options = {f"{t['filename']} ({t['task_id'][:8]}...)": t['task_id'] for t in completed_tasks}
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            selected_label1 = st.selectbox(
+                "选择任务1",
+                options=list(task_options.keys()),
+                key="compare_task1"
+            )
+        with col2:
+            selected_label2 = st.selectbox(
+                "选择任务2",
+                options=list(task_options.keys()),
+                key="compare_task2"
+            )
+
+        if st.button("开始对比分析", type="primary", key="compare_btn"):
+            task1_id = task_options[selected_label1]
+            task2_id = task_options[selected_label2]
+
+            if task1_id == task2_id:
+                st.warning("⚠️ 请选择两个不同的任务进行对比")
+            else:
+                with st.spinner("正在生成对比报告..."):
+                    try:
+                        report = compare_tasks(task1_id, task2_id)
+                    except Exception as e:
+                        st.error(f"对比分析失败: {str(e)}")
+                        st.stop()
+
+                st.markdown("---")
+                st.subheader("📋 对比报告")
+                
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.info(f"**任务1**: {report['task1_filename']}\n\nID: `{report['task1_id']}`")
+                with col2:
+                    st.info(f"**任务2**: {report['task2_filename']}\n\nID: `{report['task2_id']}`")
+
+                st.markdown("---")
+
+                st.markdown("### 1️⃣ 发言主导度对比")
+                sd = report['speaker_dominance']
+                speakers_data = []
+                for sp in sd['speakers']:
+                    speakers_data.append({
+                        "说话人": sp['speaker'],
+                        "任务1占比(%)": f"{sp['percentage_task1']:.2f}" if sp['percentage_task1'] is not None else "-",
+                        "任务2占比(%)": f"{sp['percentage_task2']:.2f}" if sp['percentage_task2'] is not None else "-"
+                    })
+                st.table(pd.DataFrame(speakers_data))
+                st.markdown(f"""
+                - 任务1发言最多者: **{sd['max_speaker_task1']}** ({sd['max_percentage_task1']:.2f}%)
+                - 任务2发言最多者: **{sd['max_speaker_task2']}** ({sd['max_percentage_task2']:.2f}%)
+                - 结论: <span style="{get_conclusion_color(sd['conclusion'])}">{sd['conclusion']}</span>
+                """, unsafe_allow_html=True)
+
+                st.markdown("---")
+
+                st.markdown("### 2️⃣ 情感倾向对比")
+                se = report['sentiment']
+                sentiment_df = pd.DataFrame([
+                    {"维度": "情感净值 (-1~1)", "任务1": f"{se['sentiment_score_task1']:.4f}", "任务2": f"{se['sentiment_score_task2']:.4f}"}
+                ])
+                st.table(sentiment_df)
+                st.markdown(f"""
+                - 结论: <span style="{get_conclusion_color(se['conclusion'])}">{se['conclusion']}</span>
+                """, unsafe_allow_html=True)
+
+                st.markdown("---")
+
+                st.markdown("### 3️⃣ 对话活跃度对比")
+                ac = report['activity']
+                activity_df = pd.DataFrame([
+                    {"指标": "总片段数", "任务1": ac['total_segments_task1'], "任务2": ac['total_segments_task2']},
+                    {"指标": "平均每轮时长(ms)", "任务1": ac['avg_segment_duration_ms_task1'], "任务2": ac['avg_segment_duration_ms_task2']}
+                ])
+                st.table(activity_df)
+                st.markdown(f"""
+                - 结论: <span style="{get_conclusion_color(ac['conclusion'])}">{ac['conclusion']}</span>
+                (片段数多且平均时长短视为节奏更快)
+                """, unsafe_allow_html=True)
+
+                st.markdown("---")
+
+                st.markdown("### 4️⃣ 打断频率对比")
+                ic = report['interruption']
+                interruption_df = pd.DataFrame([
+                    {"指标": "打断次数", "任务1": ic['interruption_count_task1'], "任务2": ic['interruption_count_task2']},
+                    {"指标": "总片段数", "任务1": ic['total_segments_task1'], "任务2": ic['total_segments_task2']},
+                    {"指标": "打断比率", "任务1": f"{ic['interruption_rate_task1']:.4f}", "任务2": f"{ic['interruption_rate_task2']:.4f}"}
+                ])
+                st.table(interruption_df)
+                st.markdown(f"""
+                - 结论: <span style="{get_conclusion_color(ic['conclusion'])}">{ic['conclusion']}</span>
+                (比率高表示对话冲突更激烈)
+                """, unsafe_allow_html=True)
+
+                st.markdown("---")
+
+                st.subheader("📊 结论汇总")
+                summary_data = [
+                    {"对比维度": "发言主导度", "结论": sd['conclusion']},
+                    {"对比维度": "情感倾向", "结论": se['conclusion']},
+                    {"对比维度": "对话活跃度", "结论": ac['conclusion']},
+                    {"对比维度": "打断频率", "结论": ic['conclusion']}
+                ]
+                summary_df = pd.DataFrame(summary_data)
+
+                def highlight_conclusion(val):
+                    color = "#28a745" if val == "task1占优" else ("#dc3545" if val == "task2占优" else "#6c757d")
+                    return f"color: {color}; font-weight: bold;"
+
+                styled_summary = summary_df.style.map(highlight_conclusion, subset=["结论"])
+                st.dataframe(styled_summary, use_container_width=True, hide_index=True)
 
 st.markdown("---")
 st.caption("语音情感识别与说话人分离分析平台 | Powered by FastAPI + Streamlit")

@@ -208,5 +208,8 @@ class TaskManager:
             return []
         return [self._tasks.get(tid) for tid in batch_info.task_ids if self._tasks.get(tid)]
 
+    def get_all_tasks(self) -> List[TaskInfo]:
+        return list(self._tasks.values())
+
 
 task_manager = TaskManager()

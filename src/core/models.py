@@ -107,3 +107,66 @@ class EmotionTimelinePoint(BaseModel):
     emotion_score: float
     speaker: str
     emotion: str
+
+
+class ComparisonLabel(str, Enum):
+    TASK1 = "task1占优"
+    TASK2 = "task2占优"
+    TIE = "持平"
+
+
+class SpeakerDominanceItem(BaseModel):
+    speaker: str
+    percentage_task1: Optional[float] = None
+    percentage_task2: Optional[float] = None
+
+
+class SpeakerDominanceComparison(BaseModel):
+    speakers: List[SpeakerDominanceItem]
+    max_speaker_task1: Optional[str] = None
+    max_percentage_task1: float = 0.0
+    max_speaker_task2: Optional[str] = None
+    max_percentage_task2: float = 0.0
+    conclusion: ComparisonLabel
+
+
+class SentimentComparison(BaseModel):
+    sentiment_score_task1: float
+    sentiment_score_task2: float
+    conclusion: ComparisonLabel
+
+
+class ActivityComparison(BaseModel):
+    avg_segment_duration_ms_task1: float
+    avg_segment_duration_ms_task2: float
+    total_segments_task1: int
+    total_segments_task2: int
+    conclusion: ComparisonLabel
+
+
+class InterruptionComparison(BaseModel):
+    interruption_rate_task1: float
+    interruption_rate_task2: float
+    interruption_count_task1: int
+    interruption_count_task2: int
+    total_segments_task1: int
+    total_segments_task2: int
+    conclusion: ComparisonLabel
+
+
+class ComparisonReport(BaseModel):
+    task1_id: str
+    task2_id: str
+    task1_filename: str
+    task2_filename: str
+    speaker_dominance: SpeakerDominanceComparison
+    sentiment: SentimentComparison
+    activity: ActivityComparison
+    interruption: InterruptionComparison
+
+
+class TaskListItem(BaseModel):
+    task_id: str
+    filename: str
+    status: TaskStatus
+    created_at: Optional[datetime] = None

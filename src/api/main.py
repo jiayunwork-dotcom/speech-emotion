@@ -13,7 +13,9 @@ from src.core.models import (
     BatchTaskResponse,
     BatchStatusResponse,
     AudioAnalysisResult,
-    StatisticsSummary
+    StatisticsSummary,
+    ComparisonReport,
+    TaskListItem
 )
 from src.tasks.manager import task_manager
 from src.stats.analyzer import StatisticsAnalyzer
@@ -227,6 +229,57 @@ async def get_batch_status(batch_id: str):
     ]
     
     return BatchStatusResponse(batch_id=batch_id, tasks=tasks)
+
+
+@app.get("/tasks", response_model=list[TaskListItem])
+async def list_tasks(status: TaskStatus = None):
+    all_tasks = task_manager.get_all_tasks()
+    result = []
+    for t in all_tasks:
+        if status is None or t.status == status:
+            created_at = None
+            if t.result:
+                created_at = t.result.created_at
+            result.append(TaskListItem(
+                task_id=t.task_id,
+                filename=t.filename,
+                status=t.status,
+                created_at=created_at
+            ))
+    return result
+
+
+@app.get("/compare", response_model=ComparisonReport)
+async def compare_tasks(task1_id: str, task2_id: str):
+    task1_info = task_manager.get_task_status(task1_id)
+    task2_info = task_manager.get_task_status(task2_id)
+
+    if not task1_info:
+        raise HTTPException(status_code=404, detail=f"Task {task1_id} not found")
+    if not task2_info:
+        raise HTTPException(status_code=404, detail=f"Task {task2_id} not found")
+
+    if task1_info.status != TaskStatus.COMPLETED:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Task {task1_id} is not completed. Current status: {task1_info.status}"
+        )
+    if task2_info.status != TaskStatus.COMPLETED:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Task {task2_id} is not completed. Current status: {task2_info.status}"
+        )
+
+    result1 = task_manager.get_task_result(task1_id)
+    result2 = task_manager.get_task_result(task2_id)
+
+    if not result1:
+        raise HTTPException(status_code=404, detail=f"Result for task {task1_id} not found")
+    if not result2:
+        raise HTTPException(status_code=404, detail=f"Result for task {task2_id} not found")
+
+    report = StatisticsAnalyzer.generate_comparison_report(result1, result2)
+    return report
 
 
 if __name__ == "__main__":

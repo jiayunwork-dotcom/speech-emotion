@@ -26,8 +26,7 @@ def test_extract_speaker_embedding():
     embedding = SpeakerSeparator.extract_speaker_embedding(y, sr)
     
     assert embedding.ndim == 1
-    expected_dim = 2 * 40 * int((settings.SPEAKER_WINDOW_DURATION * sr) / 512 + 1) * 2
-    assert len(embedding) > 0
+    assert len(embedding) == 80
 
 
 def test_cluster_speakers_single():

@@ -11,7 +11,8 @@ import io
 import librosa
 import soundfile as sf
 
-API_BASE_URL = "http://localhost:8000"
+import os
+API_BASE_URL = os.environ.get("API_BASE_URL", "http://localhost:8000")
 
 SPEAKER_COLORS = px.colors.qualitative.Set1 + px.colors.qualitative.Set2
 EMOTION_COLORS = {
@@ -66,6 +67,31 @@ def load_audio_from_bytes(audio_bytes):
     audio_file = io.BytesIO(audio_bytes)
     y, sr = librosa.load(audio_file, sr=None, mono=True)
     return y, sr
+
+def generate_srt(result_data):
+    lines = []
+    for i, seg in enumerate(result_data['segments'], 1):
+        start_ms = seg['start_ms']
+        end_ms = seg['end_ms']
+        
+        def format_time(ms):
+            seconds = ms / 1000.0
+            hours = int(seconds // 3600)
+            minutes = int((seconds % 3600) // 60)
+            secs = int(seconds % 60)
+            millis = int((seconds - int(seconds)) * 1000)
+            return f"{hours:02d}:{minutes:02d}:{secs:02d},{millis:03d}"
+        
+        speaker = seg.get('speaker', 'Unknown')
+        emotion = EMOTION_LABELS_CN.get(seg.get('emotion', 'neutral'), seg.get('emotion', 'neutral'))
+        confidence = f"{seg.get('emotion_confidence', 0):.2f}"
+        
+        lines.append(str(i))
+        lines.append(f"{format_time(start_ms)} --> {format_time(end_ms)}")
+        lines.append(f"[{speaker}] [{emotion}] (置信度: {confidence})")
+        lines.append("")
+    
+    return "\n".join(lines)
 
 def plot_waveform_with_speakers(y, sr, segments):
     fig = go.Figure()
@@ -482,31 +508,6 @@ with tab2:
             except Exception as e:
                 st.error(f"获取批次状态失败: {str(e)}")
                 break
-
-def generate_srt(result_data):
-    lines = []
-    for i, seg in enumerate(result_data['segments'], 1):
-        start_ms = seg['start_ms']
-        end_ms = seg['end_ms']
-        
-        def format_time(ms):
-            seconds = ms / 1000.0
-            hours = int(seconds // 3600)
-            minutes = int((seconds % 3600) // 60)
-            secs = int(seconds % 60)
-            millis = int((seconds - int(seconds)) * 1000)
-            return f"{hours:02d}:{minutes:02d}:{secs:02d},{millis:03d}"
-        
-        speaker = seg.get('speaker', 'Unknown')
-        emotion = EMOTION_LABELS_CN.get(seg.get('emotion', 'neutral'), seg.get('emotion', 'neutral'))
-        confidence = f"{seg.get('emotion_confidence', 0):.2f}"
-        
-        lines.append(str(i))
-        lines.append(f"{format_time(start_ms)} --> {format_time(end_ms)}")
-        lines.append(f"[{speaker}] [{emotion}] (置信度: {confidence})")
-        lines.append("")
-    
-    return "\n".join(lines)
 
 st.markdown("---")
 st.caption("语音情感识别与说话人分离分析平台 | Powered by FastAPI + Streamlit")

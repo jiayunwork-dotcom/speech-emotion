@@ -105,7 +105,7 @@ async def get_task_result(task_id: str):
             )
         raise HTTPException(status_code=404, detail="Result not found")
     
-    return JSONResponse(content=OutputFormatter.to_json(result), media_type="application/json")
+    return JSONResponse(content=result.model_dump(), media_type="application/json")
 
 
 @app.get("/task/{task_id}/summary", response_model=StatisticsSummary)

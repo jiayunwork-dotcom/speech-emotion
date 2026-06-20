@@ -36,12 +36,14 @@ class SpeakerSeparator:
         for start in range(0, len(segment_audio) - window_samples + 1, hop_samples):
             window = segment_audio[start:start + window_samples]
             features = SpeakerSeparator.extract_mfcc_features(window, sr, n_mfcc)
-            window_features.append(features.flatten())
+            feature_mean = np.mean(features, axis=1)
+            window_features.append(feature_mean)
         
         if not window_features:
             window = segment_audio[:window_samples]
             features = SpeakerSeparator.extract_mfcc_features(window, sr, n_mfcc)
-            window_features.append(features.flatten())
+            feature_mean = np.mean(features, axis=1)
+            window_features.append(feature_mean)
         
         window_features = np.array(window_features)
         mean_features = np.mean(window_features, axis=0)

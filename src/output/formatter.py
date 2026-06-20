@@ -33,7 +33,7 @@ class OutputFormatter:
                 "start_ms": seg.start_ms,
                 "end_ms": seg.end_ms,
                 "speaker": seg.speaker,
-                "emotion": seg.emotion,
+                "emotion": seg.emotion.value if seg.emotion else None,
                 "emotion_confidence": seg.emotion_confidence,
                 "emotion_probabilities": seg.emotion_probabilities
             }

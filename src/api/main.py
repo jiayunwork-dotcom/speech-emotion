@@ -91,7 +91,7 @@ async def get_task_status(task_id: str):
     )
 
 
-@app.get("/task/{task_id}/result")
+@app.get("/task/{task_id}/result", response_model=AudioAnalysisResult)
 async def get_task_result(task_id: str):
     result = task_manager.get_task_result(task_id)
     if not result:
@@ -105,7 +105,7 @@ async def get_task_result(task_id: str):
             )
         raise HTTPException(status_code=404, detail="Result not found")
     
-    return JSONResponse(content=result.model_dump(), media_type="application/json")
+    return result
 
 
 @app.get("/task/{task_id}/summary", response_model=StatisticsSummary)
